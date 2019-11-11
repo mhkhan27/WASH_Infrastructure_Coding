@@ -1,0 +1,616 @@
+---
+title: "WASH Infrastucture Data Collection Monitoring"
+author: "BGD GIS DATA UNIT"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    toc: true
+---
+
+
+
+
+
+
+
+
+
+```{r setup, include=FALSE, warning = FALSE, message=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE,
+                      message=FALSE,
+                      warning = FALSE)
+
+Infrastructure_Type<-c("Latrine","Tubewell")[1]
+# write_csv_output<-c("yes","no")[1]
+
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(lubridate)
+library(rgdal)
+library(HighFrequencyChecks)
+library(kableExtra)
+library(gsubfn)
+library(stringi)
+library(data.table)
+library(sf)
+# library(GISutils)
+library(tmap)
+library(butteR)
+# source("Functions/GIS_Project_Functions.R")
+# source("Functions/Load_Audit.R")
+# source("Functions/get_na_response_rates.R")
+# ""
+
+
+if(Infrastructure_Type=="Latrine"){
+  # gpx_path<- "02_latrine_coding/01_data_collection/05_gpx/WaypointsAll_25.09.2019.gpx"
+  
+  dropbox_daily_data_path<-"C:\\Users\\MEHEDI\\Dropbox\\REACH_BGD\\REACH\\Ongoing\\70DQP - UNICEF WASH 2019\\01_WASH_infrastructure_coding\\02_Bathing_and_latrines\\02 Data collection and checking\\daily_data/"
+  
+  main_path<-paste0(dropbox_daily_data_path,"Main.csv")
+  bathing_path<-paste0(dropbox_daily_data_path,"Bathing_repeat.csv")
+  latrine_path<-paste0(dropbox_daily_data_path,"Latrine_repeat.csv")
+  date_log_path<-"02_latrine_coding/01_data_collection/02_data_logged/date_logger_1.csv"
+  # main_path<-"02_latrine_coding/01_data_collection/Main.csv"
+  # bathing_path<-"02_latrine_coding/01_data_collection/Bathing_repeat.csv"
+  # latrine_path<-"02_latrine_coding/01_data_collection/Latrine_repeat.csv"
+  # date_log_path<-"02_latrine_coding/01_data_collection/02_data_logged/data_logged.csv"
+  # gpx_path<- "02_latrine_coding/01_data_collection/99_archived/archived_gpx/fom_glen/fixing_garmin_gpx"
+  # 
+  # audit_node<-"/azB6PDS7fxdp26j5dDJXSp/"
+  
+  ##########CHANGE WHEN SWITCHING FROM PILOT TO DC ###############3
+  # D:\\Dropbox\\REACH_BGD
+  dropbox_path<-"C:\\Users\\MEHEDI\\Dropbox\\REACH_BGD\\REACH\\Ongoing\\70DQP - UNICEF WASH 2019\\01_WASH_infrastructure_coding\\02_Bathing_and_latrines\\02 Data collection and checking\\"
+  dropbox_main_path<-paste0(dropbox_path,"daily_data\\",str_replace_all(ymd(Sys.Date()),"-","_"),"_Main_Data.csv")
+  dropbox_latrine_path<-paste0(dropbox_path,"daily_data\\",str_replace_all(ymd(Sys.Date()),"-","_"),"_LatrineRepeat.csv")
+  dropbox_bathing_path<-paste0(dropbox_path,"daily_data\\",str_replace_all(ymd(Sys.Date()),"-","_"),"_BAthingRepeat.csv")
+  # na_responses_path<-paste0(dropbox_path,"aux_outputs/NAresponses/",str_replace_all(ymd(Sys.Date()),"-","_"),"_BAthingRepeat.csv"))
+  grid_gdb<-"D:\\mh1\\REACH\\01_WASH_Infrastructure_coding\\02_latrine_coding\\01_grid_cells_all\\01_grid_cells_all"
+  
+  dropbox_aux<-"C:\\Users\\MEHEDI\\Dropbox\\REACH_BGD\\REACH\\Ongoing\\70DQP - UNICEF WASH 2019\\01_WASH_infrastructure_coding\\02_Bathing_and_latrines\\02 Data collection and checking\\aux_outputs\\"
+  dropbox_aux_na_path<-paste0(dropbox_aux,"NAresponses\\", str_replace_all(ymd(Sys.Date()),"-","_"))
+  
+}
+
+#LOAD IN GIS DATA
+boundary_gdb<- "D:\\mh1\\REACH\\Common_shape_files\\190310_outline_rohingya_refugee_camp_a1"
+boundary<-st_read(dsn=boundary_gdb,layer ="190310_Outline_Rohingya_Refugee_Camp_A1" )
+
+
+grid<-st_read(dsn=grid_gdb, layer= "01_grid_cells_all")
+main<-read.csv(main_path, stringsAsFactors = FALSE, na.strings=c("", " ", NA))
+latrine<-read.csv(latrine_path, stringsAsFactors = FALSE, na.strings=c("", " ", NA))
+bathing<- read.csv(bathing_path, stringsAsFactors = FALSE, na.strings=c("", " ", NA))
+# main$survey_start %>% range()
+long_lat<-c("X_gps_reading_1_longitude","X_gps_reading_1_latitude")
+
+#REMOVE SENSITIVE DATA (GPS) AND CORRECT UNIONS TO BOUNDARIES?
+wgs84<-st_crs(boundary)
+grid<-st_transform(x = grid, crs = st_crs(boundary))
+
+kbc<-c("camp 13", "camp 14", "camp 10",  "camp 6", "camp 18", 
+       "camp 20", "camp 1e",  "camp 17", "camp 9", 
+       "camp 8w", "camp 1w", "camp 15", "camp 5" , "camp 3", 
+       "camp 16", "camp 2w", "camp 20 extension", "camp 11", "camp 4", 
+       "camp 19",  "camp 7", "camp 4 extension", 
+       "camp 8e", "camp 2e", "camp 12")
+
+iso<-c("camp 21", "camp 22","camp 23")
+st<-c("camp 24","camp 25","camp 26","camp 27", "nayapara rc")
+
+main$camp_id<-str_replace(main$camp,"_", " " )
+main$region<-ifelse(main$camp_id %in% kbc, "Kutapalong",
+                     ifelse(main$camp_id %in% iso, "Isolated camp_ids",
+                            ifelse(main$camp_id%in% st, "Southern Teknaf", "MISSED SOMETHING")))
+
+
+##############################################
+#for this i should just make everything under 919 as "week 1"
+#REQUIRED ONLY THE FIRST DAY OF DATA COLLECTION
+############################################################
+# main$reported_date<-"week 1"
+# todays_date_log<- main %>% select(X_index, reported_date)
+# write.csv(todays_date_log,date_log_path, row.names=FALSE)
+#############################################################
+date_log<-read.csv(date_log_path, stringsAsFactors = FALSE, 
+                   na.strings = c("", " ", NA))
+date_log$reported_date
+# date_log$reported_date<-dmy(date_log$reported_date)
+# date_log$reported_date <-mdy(date_log$reported_date )
+date_log$reported_date <-ymd(date_log$reported_date )
+# date_log$reported_date %>% range()
+# date_log$reported_date<-date_log$reported_date %>% dmy()
+# date_log$reported_date<-date_log$reported_date %>%  ymd()
+
+main2<-main %>% dplyr::left_join(date_log, by= "X_index")
+# Sys.Date()
+# main2$reported_date
+main<-main2 %>% 
+  mutate(
+    reported_date=if_else(is.na(reported_date), day_to_run , reported_date)
+  ) 
+
+
+date_log_full<- main %>% select(X_index,reported_date)
+if(write_csv_output=="yes"){
+write.csv(date_log_full,date_log_path,row.names=FALSE)
+}
+#MAKE DATASET SPATIAL
+main_spatial<-st_as_sf(main,coords=long_lat,crs=wgs84)
+
+#SPATIAL JOIN CAMP BOUNDARIES TO POITNS
+main_with_boundary<-st_join(x = main_spatial,y = boundary )
+#SPATIAL JOIN PONINTS GRID WITH BOUNDARIES
+main_all<-st_join(main_with_boundary, y= grid)
+
+#CORRECT SPATIAL ATTRIBUTES
+########################################################################
+
+
+# if( population=="Host"){
+#   HH_corrected_spatial<-spatial_join(HH_spatial, unions)
+#   HH_corrected_spatial_df<- data.frame(coordinates(HH_corrected_spatial),HH_corrected_spatial@data)
+#   HH_Desensitized<-HH_corrected_spatial_df %>% select(-starts_with("gps")) %>% select(-(adm2_en:lab_rot))
+# }
+# #WILL NEED TO FIX GHIS ONCE WE GET SOME MORE DATA
+# ##########################################################################
+# if(population=="Refugee"){
+#   HH_corrected_spatial<-spatial_join(HH_spatial, strata_spatial)
+#   HH_corrected_spatial_df<- data.frame(coordinates(HH_corrected_spatial),HH_corrected_spatial@data)
+#   HH_Desensitized<-HH_corrected_spatial_df %>% select(-contains("gps")) %>% select(-(Name_Alias:X_count))
+# }
+# 
+# #WRITE DESENSITIZED DATA TO DROPBOX.
+# write.csv(HH_Desensitized,  HH_sensitive_info_removed_path)
+# write.csv(Indiv,Indiv_sensitive_info_removed_path)
+# 
+# HH_yes_consent<- HH_corrected_spatial_df %>% filter(informed_consent== "yes")
+# HH_today_yes_consent<-HH_yes_consent %>% filter(reported_date==Sys.Date())
+# HH_new<-HH_corrected_spatial_df
+# 
+# Indiv_yes_consent<- Indiv %>% filter(X_submission__uuid %in% HH_yes_consent$X_uuid)
+# 
+# consent<- "informed_consent"
+# mindur<-35
+
+```
+
+# `r ifelse(Infrastructure_Type=="Latrine","Sanitation Coding", "NADA")`
+## Analysis of Kobo data
+### Progress Tracking
+```{r}
+
+latrines_per_block<-latrine %>% 
+  group_by(X_submission__uuid) %>% 
+  summarise(latrine_per_block=n())
+bathing_per_block<-bathing %>% 
+  group_by(X_submission__uuid) %>% 
+  summarise(bathing_per_block=n())
+
+
+main_with_latrine_block_numbers<-main_with_boundary %>%
+  left_join(latrines_per_block, by= c("X_uuid"="X_submission__uuid"))  
+
+main_with_block_numbers<-main_with_latrine_block_numbers %>%
+  left_join(bathing_per_block, by= c("X_uuid"="X_submission__uuid"))  
+
+total_summary<-main_with_block_numbers %>% as.data.frame() %>% 
+  summarise(
+        number_latrine_blocks=sum(struc_type%in%c("latrine", "both")& struc_block=="yes" 
+                              ,na.rm=TRUE),
+    number_bathing_blocks=sum(struc_type%in%c("bathing", "both") & struc_block=="yes" 
+                              ,na.rm=TRUE),
+    number_mixed_blocks= sum(struc_type=="both", na.rm = TRUE),
+    number_mixed_blocks= sum(struc_type=="both", na.rm = TRUE),
+    number_latrines_in_blocks=sum(latrine_per_block,na.rm=TRUE),
+    number_bathing_facilities_in_blocks=sum(bathing_per_block, na.rm=TRUE),
+    number_latrine_non_blocks= sum(struc_type=="latrine" & struc_block=="no" ,  na.rm=TRUE),
+    number_bathing_non_blocks= sum(struc_type=="bathing" & struc_block=="no" , na.rm=TRUE),
+    number_mixed_blocks= sum(struc_type=="both", na.rm = TRUE)
+    
+    
+    
+    
+    # number_latrine_blocks=sum(struc_type%in%c("latrine", "both")& struc_block=="yes" 
+    #                           ,na.rm=TRUE),
+    # number_bathing_blocks=sum(struc_type%in%c("bathing", "both") & struc_block=="yes" 
+    #                           ,na.rm=TRUE),
+    # number_mixed_blocks= sum(struc_type=="both", na.rm = TRUE),
+    # number_latrines_in_blocks=sum(latrine_per_block,na.rm=TRUE),
+    # number_bathing_facilities_in_blocks=sum(bathing_per_block, na.rm=TRUE),
+    # number_latrine_non_blocks= sum( struc_type=="latrine" & struc_block=="no" ,  na.rm=TRUE),
+    # number_bathing_non_blocks= sum(struc_type=="bathing" & struc_block=="no" , na.rm=TRUE),
+    
+    
+  )
+
+summary_by_date<-main_with_block_numbers %>% as.data.frame()  %>% 
+  group_by(reported_date) %>% 
+  summarise(
+    number_latrine_blocks=sum(struc_type%in%c("latrine", "both")& struc_block=="yes" 
+                              ,na.rm=TRUE),
+    number_bathing_blocks=sum(struc_type%in%c("bathing", "both") & struc_block=="yes" 
+                              ,na.rm=TRUE),
+    number_mixed_blocks= sum(struc_type=="both", na.rm = TRUE),
+    number_mixed_blocks= sum(struc_type=="both", na.rm = TRUE),
+    number_latrines_in_blocks=sum(latrine_per_block,na.rm=TRUE),
+    number_bathing_facilities_in_blocks=sum(bathing_per_block, na.rm=TRUE),
+    number_latrine_non_blocks= sum(struc_type=="latrine" & struc_block=="no" ,  na.rm=TRUE),
+    number_bathing_non_blocks= sum(struc_type=="bathing" & struc_block=="no" , na.rm=TRUE),
+    number_mixed_blocks= sum(struc_type=="both", na.rm = TRUE)
+    
+  ) %>% 
+  
+  arrange(reported_date)
+
+summary_by_camp<-main_with_block_numbers %>% as.data.frame()%>%
+  group_by(camp_id) %>% 
+  summarise(
+    number_latrine_blocks=sum(struc_type%in%c("latrine", "both")& struc_block=="yes" 
+                              ,na.rm=TRUE),
+    number_bathing_blocks=sum(struc_type%in%c("bathing", "both") & struc_block=="yes" 
+                              ,na.rm=TRUE),
+    number_mixed_blocks= sum(struc_type=="both", na.rm = TRUE),
+    number_mixed_blocks= sum(struc_type=="both", na.rm = TRUE),
+    number_latrines_in_blocks=sum(latrine_per_block,na.rm=TRUE),
+    number_bathing_facilities_in_blocks=sum(bathing_per_block, na.rm=TRUE),
+    number_latrine_non_blocks= sum(struc_type=="latrine" & struc_block=="no" ,  na.rm=TRUE),
+    number_bathing_non_blocks= sum(struc_type=="bathing" & struc_block=="no" , na.rm=TRUE),
+    number_mixed_blocks= sum(struc_type=="both", na.rm = TRUE)
+    
+  ) %>% 
+  arrange(camp_id)
+summary_by_enumerator<-main_with_block_numbers%>% as.data.frame()%>%
+  group_by(enumerator_id) %>% 
+  summarise(
+    number_latrine_blocks=sum(struc_type%in%c("latrine", "both")& struc_block=="yes" 
+                              ,na.rm=TRUE),
+    number_bathing_blocks=sum(struc_type%in%c("bathing", "both") & struc_block=="yes" 
+                              ,na.rm=TRUE),
+    number_mixed_blocks= sum(struc_type=="both", na.rm = TRUE),
+    number_mixed_blocks= sum(struc_type=="both", na.rm = TRUE),
+    number_latrines_in_blocks=sum(latrine_per_block,na.rm=TRUE),
+    number_bathing_facilities_in_blocks=sum(bathing_per_block, na.rm=TRUE),
+    number_latrine_non_blocks= sum(struc_type=="latrine" & struc_block=="no" ,  na.rm=TRUE),
+    number_bathing_non_blocks= sum(struc_type=="bathing" & struc_block=="no" , na.rm=TRUE),
+    number_mixed_blocks= sum(struc_type=="both", na.rm = TRUE)
+
+  ) %>% 
+  arrange(enumerator_id)
+
+
+
+total_summary %>% kable( longtable = T, booktabs = T, linesep = "",caption= "Summary of Total Progress") %>% kable_styling(position = "center")
+
+summary_by_date %>% kable( longtable = T, booktabs = T, linesep = "",caption= "Summary of Progress By Date") %>% kable_styling(position = "center")
+ 
+
+
+````
+
+```{r}
+summary_by_camp %>% kable( longtable = T, booktabs = T, linesep = "",caption= "Summary of Progress By Camp") %>% kable_styling(position = "center")
+````
+
+```{r}
+summary_by_enumerator %>% kable( longtable = T, booktabs = T, linesep = "",caption= "Summary of Progress By Enumerator") %>% kable_styling(position = "center")
+````
+
+### Missing/ Duplicated GPS
+```{r}
+
+if(which(duplicated(main$X_uuid)) %>% length()>0){ 
+  cat("there ARE duplicated uuids in main dataset")} else{cat ("there are NO duplicated uuids in main data set")} 
+```
+
+### Check NAs
+NA response rates written to shared dropbox folder
+```{r}
+
+main_na<-get_na_response_rates(main)
+latrine_na<-get_na_response_rates(latrine)
+bathing_na<-get_na_response_rates(bathing)
+
+write.csv( main_na,paste0(dropbox_aux_na_path, "_NAresponse_main.csv"))
+write.csv( latrine_na,paste0(dropbox_aux_na_path, "_NAresponse_latrine.csv"))
+write.csv( bathing_na,paste0(dropbox_aux_na_path, "_NAresponse_bathing.csv"))
+
+
+
+```
+
+
+### Mapped Grid Data
+
+on the left is the number of latrine + mixed blocks and on the right is the number of bathing + mixed blocks. If you click on a grid cell, the popup will indicate the total #
+
+```{r }
+#SPATIAL JOIN GRID AND CAMPS?
+grid_data<-st_join(grid, main_with_boundary)
+
+
+grid_count<-grid_data %>% 
+  left_join(main_all %>% 
+              as.data.frame() %>%
+              group_by(region, camp_id,pid) %>% 
+              summarise(
+                LatBlock_Per_Grid= sum(struc_type=="latrine", na.rm=TRUE),
+                BathingBlock_Per_Grid= sum(struc_type=="bathing", na.rm=TRUE),
+                LatPlusBoth_Per_Grid=sum(struc_type=="latrine", na.rm=TRUE)+sum(struc_type=="both", na.rm=TRUE),
+                BathingPlusBoth_Per_Grid=sum(struc_type=="bathing", na.rm=TRUE)+sum(struc_type=="both", na.rm=TRUE)
+                )) %>% 
+  mutate(
+    Lats_per_grid_noNA= ifelse(is.na(LatBlock_Per_Grid),0, LatBlock_Per_Grid),
+    Bathing_per_grid_noNA= ifelse(is.na(BathingBlock_Per_Grid),0, BathingBlock_Per_Grid),
+    LatPlusBoth_per_grid_noNA= ifelse(is.na(LatPlusBoth_Per_Grid),0, LatPlusBoth_Per_Grid),
+    BathingPlusBoth_per_grid_noNA= ifelse(is.na(BathingPlusBoth_Per_Grid),0, BathingPlusBoth_Per_Grid),
+    
+    
+  )
+
+ 
+
+map_grid<-tm_shape(grid_count) +
+  tm_polygons(c("LatPlusBoth_per_grid_noNA","BathingPlusBoth_per_grid_noNA"),
+              title=c("# Latrine", "# Bathing"),popup.vars=c("Number Latrine"="LatPlusBoth_per_grid_noNA","Number Bathing"="BathingPlusBoth_per_grid_noNA")) +
+  tm_facets(sync = TRUE, ncol = 2)
+
+tmap_mode("view")
+map_grid
+
+
+```
+
+
+```{r eval=FALSE}
+
+#READ IN R8 DATA
+r8<-read.csv("02_latrine_coding/01_data_collection/04_supplementary_inputs/R8_WASH_Infra.csv",
+             stringsAsFactors = FALSE, na.strings= c(" ", "","NA"))
+     
+
+r8_wash_lat<-r8 %>% filter(Sanitation.structures_san=="san_lb"|Sanitation.structures_san=="san_wr" ) 
+r8_spatial<-st_as_sf(r8_wash_lat,coords=c( "GPS_point_longitude","GPS_point_latitude"),crs=wgs84)
+r8_gridded<-st_join(r8_spatial, grid)
+r8_grid_counts<-r8_gridded %>% group_by(pid) %>% 
+  summarise(r8_wash_rm_per_grid= sum(Sanitation.structures_san=="san_lb", na.rm=TRUE),
+            r8_latrine_per_grid= sum(Sanitation.structures_san=="san_wr"))
+
+#JOIN R8 DATA
+grid_count<-grid_count %>% left_join( 
+  r8_grid_counts %>% 
+    as.data.frame() %>% 
+    select(-geometry), by= "pid" )
+
+#USE LEAFLET TO PLOT THIS- FOR NOW IN OTHER SCRIPT
+grid_centroid <- grid_count %>%
+  mutate(
+    lon = purrr::map_dbl(geometry, ~ st_centroid(.x)[[1]]),
+    lat = purrr::map_dbl(geometry, ~ st_centroid(.x)[[2]])
+  )
+
+
+latrines_finished_extent<-grid_count %>% filter(! is.na(LatBlock_Per_Grid)) %>% st_bbox()
+bathing_finished_extent<-grid_count %>% filter(! is.na(BathingBlock_Per_Grid)) %>% st_bbox()
+
+
+latrines_finished_extent %>% tibble()
+#LEFT OFF HERE
+latrines_extent_df<-latrines_finished_extent %>% as.data.frame()
+bathing_extent_df<-bathing_finished_extent %>% as.data.frame()
+
+map_leaf<-leaflet(gov_cpp) %>% addProviderTiles('Esri.WorldImagery')%>% 
+  addCircleMarkers(lng=~lon.jit, lat=~lat.jit,popup = ~plab,
+                   color=gov_cpp$dup_ui)
+
+ggplot(grid_count)+
+  geom_sf(aes(fill=wells_per_grid_all))+
+  coord_sf(xlim = c(grids_finished_extent[[1]], 
+                    grids_finished_extent[[3]]),
+           ylim= c(grids_finished_extent[[2]], grids_finished_extent[[4]]))+
+  geom_text(data=camp_centroid,aes(x = lon, y = lat, label = New_Camp_N))+
+  geom_text(data= grid_centroid, aes(x=lon, y=lat, label=wells_per_grid))
+
+```
+
+## Check Garmin Data
+
+**disregard all text below until we get the latest gpx data**
+```{r,include=FALSE, warning = FALSE, message=FALSE}
+
+gpx<-st_read(dsn=gpx_path, layer="waypoints", stringsAsFactors = FALSE)
+
+# gpx2<-st_read(dsn=gpx_path2, layer= "waypoints", stringsAsFactors = FALSE)
+# colnames(gpx1); colnames(gpx2)
+# gpx <-do.call(gtools::smartbind, list(gpx1, gpx2))
+# gpx %>% head()
+# gpx_relevant<- gpx %>%
+#   filter(!is.na(time)) %>% 
+#   mutate(date_time= time %>% ymd_hms()) %>% 
+#   filter(date_time> "2019-08-01 08:00:00 UTC") 
+
+
+# st_write(gpx_relevant,paste0(gpx_path, "/20190818_garmin_filtered_to_aug1.GPKG"))
+main_with_bathing_blocks_spread<-main %>% 
+  filter(struc_type!="latrine" &
+             (struc_destroyed=="no"| is.na(struc_destroyed))) %>% 
+  select(X_uuid,reported_date, not_struc_block_bat_code) %>% 
+  left_join(
+    bathing %>% 
+  select(X_submission__uuid, bat_code) %>% 
+  group_by(X_submission__uuid) %>% 
+  mutate(bat_num=paste0("bat_num_",seq(1:n()))) %>% 
+  ungroup() %>%
+  tidyr::spread(bat_num,bat_code), 
+  by= c("X_uuid"="X_submission__uuid")) 
+
+main_with_latrine_blocks_spread<-main %>% 
+  filter(struc_type!="bathing" &
+             (struc_destroyed=="no"| is.na(struc_destroyed))) %>% 
+  select(X_uuid,reported_date, not_struc_block_lat_code) %>% 
+  left_join(
+    latrine %>% 
+  select(X_submission__uuid, lat_code) %>% 
+  group_by(X_submission__uuid) %>% 
+  mutate(lat_num=paste0("lat_num_",seq(1:n()))) %>% 
+  ungroup() %>%
+  tidyr::spread(lat_num,lat_code), 
+  by= c("X_uuid"="X_submission__uuid")) 
+
+number_garmins_per_uuid_latrine_blocks<-latrine %>% 
+  left_join(gpx %>%
+              mutate(name2= name) %>% 
+              select(time, name, name2),
+            by=c("lat_code"= "name" )) %>% 
+  group_by(X_submission__uuid) %>% 
+  filter(!is.na(name2)) %>% 
+  summarise(number_garmins_pts_with_same_label=n()) %>% 
+  left_join(main %>% 
+              select(X_uuid,reported_date,enumerator_id), c("X_submission__uuid"="X_uuid")) %>% 
+  mutate(block_type= "latrine") %>% 
+  select(reported_date, everything())
+
+latrine_blocks_with_no_match<-latrine %>% 
+  left_join(gpx %>%
+              mutate(name2= name) %>% 
+              select(time, name, name2),
+            by=c("lat_code"= "name" )) %>% 
+  mutate(matching_garming_pt=ifelse(is.na(name2),0,1)) %>% 
+  group_by(X_submission__uuid) %>% 
+  summarise(number_matching_garmins=sum(matching_garming_pt,na.rm = TRUE)
+            ) %>% 
+  left_join(main %>% 
+              select(X_uuid,reported_date,enumerator_id), c("X_submission__uuid"="X_uuid")) %>% 
+  mutate(block_type= "latrine") %>% 
+  select(reported_date, everything()) %>% 
+  filter(number_matching_garmins<1) %>% 
+  arrange(reported_date, enumerator_id)
+
+bathing_blocks_with_no_match<-bathing %>% 
+  left_join(gpx %>%
+              mutate(name2= name) %>% 
+              select(time, name, name2),
+            by=c("bat_code"= "name" )) %>% 
+  mutate(matching_garming_pt=ifelse(is.na(name2),0,1)) %>% 
+  group_by(X_submission__uuid) %>% 
+  summarise(number_matching_garmins=sum(matching_garming_pt,na.rm = TRUE)
+            ) %>% 
+  left_join(main %>% 
+              select(X_uuid,reported_date,enumerator_id), c("X_submission__uuid"="X_uuid")) %>% 
+  mutate(block_type= "latrine") %>% 
+  select(reported_date, everything()) %>% 
+  filter(number_matching_garmins<1) %>% 
+  arrange(reported_date, enumerator_id)
+
+
+number_garmins_per_uuid_bathing_blocks <-bathing %>% 
+  left_join(gpx %>%
+              mutate(name2= name) %>% 
+              select(time, name, name2),
+            by=c("bat_code"= "name" )) %>% 
+  group_by(X_submission__uuid) %>% 
+  filter(!is.na(name2)) %>% 
+  summarise(number_garmins_pts_with_same_label=n()) %>% 
+  left_join(main %>% 
+              select(X_uuid,reported_date,enumerator_id), c("X_submission__uuid"="X_uuid")) %>% 
+  mutate(block_type= "bathing") %>% 
+  select(reported_date, everything()) 
+
+number_garmin_per_block<-do.call("rbind",list(number_garmins_per_uuid_latrine_blocks, number_garmins_per_uuid_bathing_blocks))
+
+
+blocks_with_more_than_one_garmin_pt<-number_garmin_per_block %>% 
+  arrange(reported_date, enumerator_id) %>% 
+  filter(number_garmins_pts_with_same_label>1)
+```
+
+
+There are **`r nrow(blocks_with_more_than_one_garmin_pt)`** cases where we have duplicated labels recorded in the garmin devices that link to one uuid in the kobo dataset. Since enumerator ID is not recorded on the garmin device we cannot say for sure if this is due to one enumerator dropping multiple garmin points for the same block, multiple enumerators marking the same point, or if it is due to typos caused by one or more enumerators.
+
+Although we cannot confidentally determine the source of duplication, the table below includes the enumerator_id associated with kobo uuid as a way to begin investigating the error. These majority of these points should be reconcileable via thorough GIS analysis and comaprison with kobo points.
+
+```{r}
+
+blocks_with_more_than_one_garmin_pt %>% kable( longtable = T, booktabs = T, linesep = "",caption= "Blocks with more than one garmin point") %>% kable_styling(position = "center")
+```
+
+There are **`r nrow(latrine_blocks_with_no_match)`**  latrine blocks which have no corresponding garmin point. There are are **`r nrow(bathing_blocks_with_no_match)`** bathing blocks that have no corresponding garmin point. The tables below display the relevant data for the bathing/latrine data in the kobo dataset which have no matching garmin point.
+
+```{r}
+
+
+latrine_blocks_with_no_match %>% kable(longtable = T, booktabs = T, linesep = "",caption= "Latrine Blocks With No Garmin Points") %>% kable_styling(position = "center")
+
+
+bathing_blocks_with_no_match %>% kable(longtable = T, booktabs = T, linesep = "",caption= "Bathing Blocks With No Garmin Points") %>% kable_styling(position = "center")
+
+
+
+```
+
+```{r}
+number_bathing_non_blocks<-main %>% 
+  filter(struc_block=="no") %>% 
+  filter(struc_destroyed=="no") %>% 
+  filter(struc_type=="bathing") %>% nrow()
+
+non_matching_bathing_non_blocks<-main %>% 
+  filter(struc_block=="no") %>% 
+  filter(struc_destroyed=="no") %>% 
+  filter(struc_type=="bathing") %>% 
+  filter(!is.na(not_struc_block_bat_code)) %>% 
+  select(X_uuid, reported_date, enumerator_id,not_block_code=not_struc_block_bat_code) %>% 
+  left_join(gpx %>% as.data.frame() %>% 
+              mutate(name2=name) %>% 
+              select(time,name,name2, -geometry) , by=c("not_block_code"= "name")) %>% 
+  filter(is.na(name2)) %>% 
+    select(-time, - name2) %>% 
+  mutate(facility_type="bathing") 
+
+number_latrine_non_blocks<-main %>% 
+  filter(struc_block=="no") %>% 
+  filter(struc_destroyed=="no") %>% 
+  filter(struc_type=="latrine") %>% nrow()
+
+
+non_matching_latrine_non_blocks<-main %>% 
+  filter(struc_block=="no") %>% 
+  filter(struc_destroyed=="no") %>% 
+  filter(struc_type=="latrine") %>% 
+  filter(!is.na(not_struc_block_lat_code)) %>% 
+  select(X_uuid, reported_date, enumerator_id,not_block_code=not_struc_block_lat_code) %>% 
+  left_join(gpx %>% as.data.frame() %>% 
+              mutate(name2=name) %>% 
+              select(time,name,name2, -geometry) , by=c("not_block_code"= "name")) %>% 
+  filter(is.na(name2)) %>% 
+  select(-time, - name2) %>% 
+  mutate(facility_type="latrine") 
+
+
+non_matching_non_blocks<-do.call("rbind", list(non_matching_bathing_non_blocks, non_matching_latrine_non_blocks))
+non_matching_non_blocks<-non_matching_non_blocks %>% 
+  select(reported_date, everything()) %>% arrange(reported_date, enumerator_id)
+# non_matching_non_blocks<-non_matching_non_blocks %>% arrange(desc(reported_date), enumerator_id)
+```
+
+Of the total bathing facilities not classified as blocks (**`r number_bathing_non_blocks`**) there are **`r nrow(non_matching_bathing_non_blocks)`**
+that do not have a matching garmin label.
+
+Of the total latrine facilities not classified as blocks (**`r number_latrine_non_blocks`**) there are **`r nrow(non_matching_latrine_non_blocks)`**
+that do not have a matching garmin label.
+
+There is no way to reconcile these points with confidence.
+```{r}
+
+
+
+non_matching_non_blocks %>% kable( longtable = T, booktabs = T, linesep = "",caption= "Non-Block Facilities with no matching Garmin point") %>% kable_styling(position = "center")
+
+
+
+````
+
