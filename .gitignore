@@ -22,6 +22,7 @@
 vignettes/*.html
 vignettes/*.pdf
 
+
 # OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
 .httr-oauth
 
@@ -40,3 +41,5 @@ rsconnect/
 #ignore files
 02_latrine_coding/03_DQM_DC_Strategy/*
 02_latrine_coding/01_data_collection/*
+*.html
+
